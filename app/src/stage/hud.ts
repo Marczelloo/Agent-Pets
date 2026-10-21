@@ -80,11 +80,17 @@ export function drawRouterBadge(x: CanvasRenderingContext2D, cx: number, y: numb
 export type LimitAgent = 'claude' | 'codex' | 'antigravity';
 export const LIMIT_AGENTS: readonly LimitAgent[] = ['claude', 'codex', 'antigravity'];
 
-export interface LimitBar { agent: LimitAgent; window: 'five_hour' | 'weekly'; pct: number; stale: boolean }
+/** An agent's usage windows: 5h and weekly (plus spend for Claude), or a single monthly one on a free plan (Codex). */
+export function limitWindows(agent: LimitAgent, limits: Limit[], spend = true): Limit['window'][] {
+  const extra: Limit['window'][] = agent === 'claude' && spend ? ['spend'] : [];
+  return limits.some(l => l.agent === agent && l.window === 'monthly') ? ['monthly', ...extra] : ['five_hour', 'weekly', ...extra];
+}
+
+export interface LimitBar { agent: LimitAgent; window: 'five_hour' | 'weekly' | 'monthly'; pct: number; stale: boolean }
 
 export function limitBars(limits: Limit[]): LimitBar[] {
   const out: LimitBar[] = [];
-  for (const agent of LIMIT_AGENTS) for (const window of ['five_hour', 'weekly'] as const) {
+  for (const agent of LIMIT_AGENTS) for (const window of limitWindows(agent, limits, false) as LimitBar['window'][]) {
     const l = limits.find(v => v.agent === agent && v.window === window);
     if (l && Number.isFinite(l.used_pct)) out.push({ agent, window, pct: clampPct(l.used_pct), stale: l.stale_since != null });
   }

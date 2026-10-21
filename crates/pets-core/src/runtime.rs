@@ -27,6 +27,8 @@ pub struct RuntimeConfig {
     pub apps: crate::settings::Apps,
     /// Language of action and question text.
     pub lang: crate::i18n::Lang,
+    /// Where the Claude mod's commands go (`/v1/actions/claude-mod`); `None` leaves the route out.
+    pub desk: Option<crate::mod_action::Desk>,
 }
 
 impl RuntimeConfig {
@@ -40,6 +42,7 @@ impl RuntimeConfig {
             router_status: dirs::home_dir().map(|h| h.join(".agent-router").join(crate::router::FILE)),
             apps: crate::settings::Apps::default(),
             lang: crate::i18n::system(),
+            desk: None,
         })
     }
 }
@@ -89,7 +92,7 @@ impl Runtime {
         let (tx, hooks) = channel();
         let doors = std::sync::Arc::new(crate::ingest::Doors::new(&cfg.apps));
         let board: StateBoard = std::sync::Arc::new(std::sync::RwLock::new(crate::mod_state::empty(env!("CARGO_PKG_VERSION"))));
-        let ingest = Ingest::start(Endpoint::new_token(), tx, doors.clone(), board.clone())?;
+        let ingest = Ingest::start_with_desk(Endpoint::new_token(), tx, doors.clone(), board.clone(), cfg.desk)?;
         ingest.endpoint().write(&cfg.endpoint_path).context("writing endpoint.json")?;
         let mut rt = Runtime {
             store: Store::new(Timing::default()), sources: Sources::new(), tasks: TaskTracker::default(),
@@ -458,7 +461,7 @@ mod tests {
         RuntimeConfig { home: h.path().into(), endpoint_path: h.path().join("endpoint.json"), record: None,
             claude_usage_files: vec![h.path().join("Claude").join(claude::desktop_usage::FILE)],
             router_status: Some(h.path().join(".agent-router").join(crate::router::FILE)),
-            apps: crate::settings::Apps::default(), lang: crate::i18n::Lang::Pl }
+            apps: crate::settings::Apps::default(), lang: crate::i18n::Lang::Pl, desk: None }
     }
 
     fn start(cfg: RuntimeConfig) -> Runtime { Runtime::start_with_watch(cfg, false).unwrap() }

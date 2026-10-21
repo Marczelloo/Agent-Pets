@@ -227,7 +227,15 @@ impl Store {
 
     /// A limit without reset time (e.g. from the Claude app) retains a known reset until it passes: still the same window.
     fn merge_limits(&mut self, new: &[Limit], ts: i64) {
+        // a plan change swaps the windows (paid 5 h + weekly, free monthly): older readings of the other kind are gone
         for l in new {
+            let other = |x: &Limit| x.agent == l.agent && (x.window == Window::Monthly) != (l.window == Window::Monthly)
+                && x.window != Window::Spend && l.window != Window::Spend;
+            if self.limits.iter().zip(&self.limits_ts).any(|(x, t)| other(x) && *t > ts) { continue; }
+            let (limits, ts_kept): (Vec<Limit>, Vec<i64>) = self.limits.iter().copied().zip(self.limits_ts.iter().copied())
+                .filter(|(x, _)| !other(x)).unzip();
+            self.limits = limits;
+            self.limits_ts = ts_kept;
             match self.limits.iter().position(|x| x.agent == l.agent && x.window == l.window) {
                 Some(i) if self.limits_ts[i] > ts => {}
                 Some(i) => {
@@ -923,6 +931,22 @@ mod tests {
         s.apply(&at(2_000_000, week(18.0, 9_000_000)));
         s.apply(&at(1_000_000, week(61.0, 1_500_000)));
         assert_eq!(s.limits(), &[week(18.0, 9_000_000)]);
+    }
+
+    #[test]
+    fn a_plan_change_swaps_the_windows() {
+        // a paid Codex plan ends: the free plan reports only a monthly window, and 5 h and weekly stop meaning anything
+        let mut s = Store::new(Timing::default());
+        let lim = |w: Window, p: f32| Limit { agent: Agent::Codex, window: w, used_pct: p, resets_at: Some(9_000_000), stale_since: None };
+        let at = |ts: i64, l: Vec<Limit>| { let mut e = Event::new(Source::Codex, "c", Kind::Limits, ts); e.data.limits = l; e };
+        let claude = Limit { agent: Agent::Claude, ..lim(Window::Weekly, 5.0) };
+        s.apply(&at(1_000, vec![lim(Window::FiveHour, 40.0), lim(Window::Weekly, 20.0), claude]));
+        s.apply(&at(2_000, vec![lim(Window::Monthly, 3.0)]));
+        assert_eq!(s.limits(), &[claude, lim(Window::Monthly, 3.0)], "other agents keep theirs");
+        s.apply(&at(1_500, vec![lim(Window::FiveHour, 41.0)]));
+        assert_eq!(s.limits(), &[claude, lim(Window::Monthly, 3.0)], "an older paid reading (an old rollout) does not come back");
+        s.apply(&at(3_000, vec![lim(Window::FiveHour, 1.0), lim(Window::Weekly, 1.0)]));
+        assert_eq!(s.limits(), &[claude, lim(Window::FiveHour, 1.0), lim(Window::Weekly, 1.0)], "paid again: monthly is gone");
     }
 
     #[test]

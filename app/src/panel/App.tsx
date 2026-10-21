@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { actionLabel, formatAgo, formatDuration, limitName, petTooltip } from '../tooltip/text';
@@ -308,6 +308,8 @@ export default function App() {
   };
   const [, tick] = useState(0);
   const take = useRef((s: Snapshot) => { setSnap(s); setOffset(s.now - Date.now()); });
+  // the open/close transition (panel.html): set before paint, so a freshly shown window starts from the faded-out frame
+  useLayoutEffect(() => { document.documentElement.dataset.panel = shown ? 'open' : 'closed'; }, [shown]);
 
   useEffect(() => {
     let unfocus: ReturnType<typeof setTimeout> | undefined;
@@ -344,7 +346,10 @@ export default function App() {
     const t = setInterval(() => tick(n => n + 1), 1000);
     const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') void invoke('panel_hide'); };
     addEventListener('keydown', esc);
-    return () => { clearInterval(t); clearTimeout(unfocus); removeEventListener('keydown', esc); un.forEach(p => void p.then(f => f())); };
+    // the clear margin around the panel (room for its shadow) is not the panel: a press there closes it
+    const outside = (e: MouseEvent) => { if (!(e.target as Element | null)?.closest?.('.panel')) void invoke('panel_hide'); };
+    addEventListener('mousedown', outside);
+    return () => { clearInterval(t); clearTimeout(unfocus); removeEventListener('keydown', esc); removeEventListener('mousedown', outside);un.forEach(p => void p.then(f => f())); };
   }, []);
 
   const onJump = async (sessionId: string) => {

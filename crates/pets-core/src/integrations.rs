@@ -112,7 +112,7 @@ macro_rules! plugin_file {
 /// a test walks `claude-plugin/` so a new file cannot be forgotten. `plugin.json` goes last: the mod's duplicate
 /// guard treats the folder as present once it exists, so it must never exist next to a half-written `hooks/`.
 const PLUGIN_FILES: &[(&str, &[u8])] = &[
-    plugin_file!("hooks/hooks.json"), plugin_file!("hooks/bridge.ts"), plugin_file!("hooks/nudge.ts"), plugin_file!("hooks/pane.tsx"),
+    plugin_file!("hooks/hooks.json"), plugin_file!("hooks/bridge.ts"), plugin_file!("hooks/commands.ts"), plugin_file!("hooks/nudge.ts"), plugin_file!("hooks/pane.tsx"),
     plugin_file!("hooks/pet.tsx"), plugin_file!("hooks/register.tsx"), plugin_file!("hooks/report.ts"), plugin_file!("hooks/sprites.ts"),
     plugin_file!("types/index.d.ts"), plugin_file!(".claude-plugin/plugin.json"),
 ];

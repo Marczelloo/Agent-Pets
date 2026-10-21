@@ -24,7 +24,7 @@ pub fn render(store: &Store, now: i64) -> String {
     }
     out += "\nLimits:\n";
     for l in store.limits() {
-        let w = match l.window { Window::FiveHour => "5h", Window::Weekly => "week", Window::Spend => "spend" };
+        let w = match l.window { Window::FiveHour => "5h", Window::Weekly => "week", Window::Spend => "spend", Window::Monthly => "month" };
         let reset = l.resets_at.map(|r| format!(" (resets in {} min)", ((r - now) / 60_000).max(0))).unwrap_or_default();
         out += &format!("  {} {}: {:.0}%{}\n", name(l.agent), w, l.used_pct, reset);
     }

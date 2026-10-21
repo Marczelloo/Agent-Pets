@@ -11,6 +11,7 @@ pub mod i18n;
 pub mod ingest;
 pub mod labels;
 pub mod links;
+pub mod mod_action;
 pub mod integrations;
 pub mod mod_state;
 pub mod model;

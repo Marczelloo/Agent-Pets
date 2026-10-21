@@ -5,7 +5,7 @@ export type Endpoint = { port: number; token: string }
 export type Prefs = { pet: boolean; nudges: boolean }
 export type Board = { v: 1; app_version: string; prefs?: Prefs; sessions: BoardSession[]; limits: BoardLimit[] }
 export type BoardSession = { id: string; agent: string; state: string; title: string; question?: string | null; cwd: string; since: number }
-export type BoardLimit = { agent: string; window: 'five_hour' | 'weekly' | 'spend'; used_pct: number; resets_at?: number | null; stale_since?: number | null }
+export type BoardLimit = { agent: string; window: 'five_hour' | 'weekly' | 'spend' | 'monthly'; used_pct: number; resets_at?: number | null; stale_since?: number | null }
 
 /**
  * What the bridge needs from the engine. The plugin validator follows `$` only inside the file that
@@ -28,7 +28,23 @@ const DUPLICATE_TTL_MS = 60_000
 const PREFS_TTL_MS = 30_000
 const EVENTS_PATH = '/v1/events/claude-mod'
 const STATE_PATH = '/v1/state'
+const ACTIONS_PATH = '/v1/actions/claude-mod'
 const SKILLS_COPY = '/.claude/skills/agent-pets'
+
+/** A `/pets` command for the widget (`crates/pets-core/src/mod_action.rs`). */
+export type Action =
+  | { action: 'jump' | 'panel'; session_id: string }
+  | { action: 'mute'; choice: 'off' | 'hour' | 'morning' | 'forever' }
+  | { action: 'rename'; session_id: string; name: string | null }
+  | { action: 'pin'; session_id: string; pinned: boolean }
+  | { action: 'clear' }
+  | { action: 'prefs'; pet?: boolean; nudges?: boolean }
+
+/**
+ * The widget's answer. Besides its own errors (`not_found`, `bad_choice`, `save_failed`) the bridge adds `unsupported`
+ * (an app too old for commands), `busy` (it did not answer in time) and `rejected` (it did not understand the command).
+ */
+export type ActionReply = { ok: boolean; title?: string; agent?: string; until?: number; count?: number; error?: string }
 
 /** Forward slashes, no trailing slash. Compare with `.toLowerCase()` where case does not matter. */
 const normalise = (path: string) => path.replace(/\\/g, '/').replace(/\/+$/, '')
@@ -92,7 +108,8 @@ export function createBridge(io: BridgeIo) {
   }
 
   // A 2xx or a 400 is an answer; anything else (or no answer) drops the endpoint and pauses every call.
-  const request = async (path: string, init: { method: string; body?: string }): Promise<BridgeResponse | null> => {
+  // `answers`: more statuses that are an answer for this call, not a sign the widget is gone.
+  const request = async (path: string, init: { method: string; body?: string }, answers: number[] = []): Promise<BridgeResponse | null> => {
     if (await isDuplicateCopy()) return null
     const now = await io.now()
     if (now < backoffUntil) return null
@@ -101,7 +118,7 @@ export function createBridge(io: BridgeIo) {
       const headers: Record<string, string> = { authorization: `Bearer ${endpoint.token}` }
       if (init.body !== undefined) headers['content-type'] = 'application/json'
       const res = await io.fetch(`http://127.0.0.1:${endpoint.port}${path}`, { method: init.method, headers, body: init.body })
-      if (res.ok || res.status === 400) return res
+      if (res.ok || res.status === 400 || answers.includes(res.status)) return res
     } catch {
       // fall through to the backoff
     }
@@ -154,6 +171,25 @@ export function createBridge(io: BridgeIo) {
         return cached?.value ?? DEFAULT_PREFS
       } catch {
         return DEFAULT_PREFS
+      }
+    },
+
+    /** Carries out a command in the widget; null when it is unreachable or the bridge is backing off. Never throws. */
+    async action(body: Action): Promise<ActionReply | null> {
+      try {
+        // an older app has no such route (404): that says nothing about the widget, so no backoff either
+        const res = await request(ACTIONS_PATH, { method: 'POST', body: JSON.stringify({ v: 1, ...body }) }, [404, 503])
+        if (!res) return null
+        if (res.status === 404) return { ok: false, error: 'unsupported' }
+        if (res.status === 503) return { ok: false, error: 'busy' }
+        if (!res.ok) return { ok: false, error: 'rejected' }
+        const reply: unknown = JSON.parse(res.text)
+        if (typeof reply !== 'object' || reply === null || typeof (reply as ActionReply).ok !== 'boolean') return { ok: false, error: 'rejected' }
+        // a switch just changed: the next look reads the board instead of the cached switches
+        if (body.action === 'prefs') cached = undefined
+        return reply as ActionReply
+      } catch {
+        return { ok: false, error: 'rejected' }
       }
     },
 

@@ -1,4 +1,4 @@
-import { LIMIT_AGENTS, clampPct, progressFraction, type LimitAgent } from '../stage/hud';
+import { LIMIT_AGENTS, clampPct, limitWindows, progressFraction, type LimitAgent } from '../stage/hud';
 import { actionLabel, formatAgo, formatPace, formatReset, limitName } from '../tooltip/text';
 import { isLive, routerHealth } from '../stage/router';
 import type { AgentUsage, Forecast, Limit, NotificationEntry, Session, UpdateStatus } from '../types';
@@ -81,10 +81,10 @@ export function usageLine(s: Session, today: AgentUsage | undefined): string | n
 
 export interface LimitRow { agent: LimitAgent; window: Limit['window']; label: string; pct: number | null; reset: string; stale: boolean; pace: string | null }
 
-/** Claude and Codex keep their 5h and weekly rows; spend and Antigravity need readings. */
+/** Claude and Codex keep their 5h and weekly rows (or the monthly one on a free plan); spend and Antigravity need readings. */
 export function limitRows(limits: Limit[], nowMs: number, forecasts: Forecast[] = []): LimitRow[] {
   const rows: LimitRow[] = [];
-  for (const agent of LIMIT_AGENTS) for (const window of (agent === 'claude' ? ['five_hour', 'weekly', 'spend'] : ['five_hour', 'weekly']) as Limit['window'][]) {
+  for (const agent of LIMIT_AGENTS) for (const window of limitWindows(agent, limits)) {
     const l = limits.find(v => v.agent === agent && v.window === window);
     const ok = l != null && Number.isFinite(l.used_pct);
     if (!ok && (agent === 'antigravity' || window === 'spend')) continue;

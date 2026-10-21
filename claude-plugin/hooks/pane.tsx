@@ -1,6 +1,7 @@
 import type { EngineInterface as Api, On } from 'claude-code'
 import { sharedBridge } from './bridge'
 import type { Bridge, BridgeIo, Prefs } from './bridge'
+import { ARGUMENT_HINT, HELP, describe, parse } from './commands'
 
 const PANE = 'agent-pets'
 const BAR_CELLS = 10
@@ -12,7 +13,7 @@ export const prefsLine = (p: Prefs): string =>
 
 type LimitRow = { label: string; percent: number; resetsAt?: number | null; stale: boolean }
 
-const WINDOW_LABEL: Record<string, string> = { five_hour: '5h', weekly: 'week', seven_day: 'week', spend: 'spend', spend_limit: 'spend' }
+const WINDOW_LABEL: Record<string, string> = { five_hour: '5h', weekly: 'week', seven_day: 'week', monthly: 'month', spend: 'spend', spend_limit: 'spend' }
 
 // Everything the widget sends ends up in a Text, and ultimately comes from the user's sessions: one tidy line each.
 // Control characters and line breaks become a space; bidi marks and zero-width characters (which could reorder
@@ -115,26 +116,52 @@ function ioOf($: Api): BridgeIo {
   }
 }
 
+async function registerCommand($: Api, bridge?: Bridge): Promise<void> {
+  // The app's own copy has the command; a second /pets would only ever say "widget not running".
+  if (await (bridge ?? sharedBridge(ioOf($))).isDuplicateCopy()) return
+  // immediate: `/pets jump` or `/pets mute` is wanted while a turn is still running, not after it
+  await $.command.register({ name: 'pets', description: 'Agent Pets: sessions and limits, jump, mute and more', argumentHint: ARGUMENT_HINT, immediate: true })
+}
+
 /**
- * `/pets` (terminal, interactive sessions): a pane with the widget's sessions and limits, and where the pet and nudges are switched.
+ * `/pets` (the terminal, the desktop app, VS Code, the phone): a pane with the widget's sessions and limits, and where the pet and nudges are switched.
+ * `/pets <command>` controls the widget instead (`commands.ts`).
  * Without the widget it shows this session's own limits and says so. Reads through `bridge`, or the shared one.
  */
 export function registerPane(on: On, bridge?: Bridge): void {
   // A matcher: the engine takes one unmatched hook per event and plugin, and report.ts has that one.
   on('session.start', { surface: 'terminal', isInteractive: true }, async ($, e, next) => {
     const r = await next(e)
-    try {
-      // The app's own copy has the command; a second /pets would only ever say "widget not running".
-      if (await (bridge ?? sharedBridge(ioOf($))).isDuplicateCopy()) return r
-      await $.command.register({ name: 'pets', description: 'Agent Pets: sessions and limits' })
-    } catch {}
+    try { await registerCommand($, bridge) } catch {}
+    return r
+  })
+  // The desktop app, VS Code and the phone start the session without a surface and join it later;
+  // registering again only replaces the command.
+  on('session.attach', { surface: ['desktop', 'vscode', 'mobile'] }, async ($, e, next) => {
+    const r = await next(e)
+    try { await registerCommand($, bridge) } catch {}
     return r
   })
 
   on('command.run', { command: 'pets' }, async ($, e, next) => {
-    if (await (bridge ?? sharedBridge(ioOf($))).isDuplicateCopy()) return next(e)
+    const b = bridge ?? sharedBridge(ioOf($))
+    if (await b.isDuplicateCopy()) return next(e)
+    const cmd = parse(e.args)
+    if (cmd.kind === 'help') return { text: HELP }
+    if (cmd.kind === 'usage') return { text: cmd.text }
+    if (cmd.kind === 'action') {
+      try {
+        const sent = cmd.action(await $.session.id())
+        return { text: describe(sent, await b.action(sent), await $.clock.now(), t => tidy(t, 80)) }
+      } catch {
+        return { text: 'Agent Pets widget not running' }
+      }
+    }
     try {
-      await $.ui.open({ id: PANE, title: 'Agent Pets', focus: true, closeOnEscape: true })
+      const { isPlaced } = await $.ui.open({ id: PANE, title: 'Agent Pets', focus: true, closeOnEscape: true })
+      // a surface that draws no panes still takes the commands
+      if (!isPlaced) return { text: `The Agent Pets pane does not show here; the commands do:
+${HELP}` }
     } catch {}
     return {}
   })

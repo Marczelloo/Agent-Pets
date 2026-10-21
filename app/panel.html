@@ -17,8 +17,11 @@
   --track:rgba(255,255,255,.1);--btn:#373737;--btnh:#3D3D3D;--btnb:rgba(255,255,255,.08);--focus:rgba(217,119,87,.22);--scroll:rgba(255,255,255,.18);--scrollh:rgba(255,255,255,.32);--router:#9BB8F5;--warn:#EF9F27}
 html,body{margin:0;height:100%;background:transparent;overflow:hidden}
 body{font:13px/1.4 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;color:var(--txt)}
-#root{height:100%}
-.panel{box-sizing:border-box;height:100%;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--edge);border-radius:8px;overflow:hidden}
+#root{height:100%;display:flex;align-items:center;justify-content:center}
+.panel{box-sizing:border-box;width:min(400px,100%);height:min(540px,100%);flex:none;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--edge);border-radius:8px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,.3);transform-origin:50% 100%;transition:opacity .2s cubic-bezier(.2,.8,.2,1),transform .24s cubic-bezier(.2,.8,.2,1)}
+/* open/close (App sets data-panel; the browser preview sets none and stays open): in with a soft rise, out quicker.
+   The window hides only after the fade-out (panel.rs EXIT_MS), so the next opening starts from an empty frame. */
+html[data-panel="closed"] .panel{opacity:0;transform:translateY(8px) scale(.98);pointer-events:none;transition:opacity .12s ease-in,transform .12s ease-in}
 header{display:flex;align-items:center;justify-content:space-between;padding:12px 12px 8px 16px}
 .icons{display:flex;align-items:center;gap:2px}
 h1{margin:0;font:600 15px/1.2 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif}
@@ -118,7 +121,7 @@ h1{margin:0;font:600 15px/1.2 "Segoe UI Variable Display","Segoe UI",system-ui,s
 .act.ok .mark{color:var(--codex)}
 .act.err{color:var(--hot);font-weight:600}
 @keyframes pulse{50%{opacity:.35}}
-@media (prefers-reduced-motion: reduce){.act.run .mark::before{animation:none}}
+@media (prefers-reduced-motion: reduce){.act.run .mark::before{animation:none}.panel,html[data-panel="closed"] .panel{transform:none}}
 .kid .time{font-size:12px;color:var(--mut);font-variant-numeric:tabular-nums;white-space:nowrap}
 .session.needs_you{box-shadow:inset 3px 0 0 var(--needs)}
 .session.error{box-shadow:inset 3px 0 0 var(--hot)}

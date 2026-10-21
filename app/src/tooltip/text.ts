@@ -1,7 +1,7 @@
 import type { Limit, Media, Session, TooltipContent } from '../types';
 import { mediaAppName } from '../stage/media';
 import { listens } from '../stage/sceneFor';
-import { LIMIT_AGENTS, clampPct, progressFraction, type LimitAgent } from '../stage/hud';
+import { LIMIT_AGENTS, clampPct, limitWindows, progressFraction, type LimitAgent } from '../stage/hud';
 import { routerLine } from '../stage/router';
 import { t, lang } from '../i18n';
 import { agentLabel, hostLabel, modelLabel } from '../model-label';
@@ -73,7 +73,7 @@ export const limitName = (a: LimitAgent) => a === 'claude' ? t().agent.limitClau
 
 export function limitsTooltip(limits: Limit[], nowMs: number): TooltipContent {
   const lines: string[] = [];
-  for (const agent of LIMIT_AGENTS) for (const window of (agent === 'claude' ? ['five_hour', 'weekly', 'spend'] : ['five_hour', 'weekly']) as Limit['window'][]) {
+  for (const agent of LIMIT_AGENTS) for (const window of limitWindows(agent, limits)) {
     const l = limits.find(v => v.agent === agent && v.window === window);
     if (!l || !Number.isFinite(l.used_pct)) continue;
     const reset = formatReset(l.resets_at, nowMs);

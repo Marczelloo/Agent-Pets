@@ -64,7 +64,7 @@ fn state_name(s: State) -> Option<&'static str> {
 }
 
 fn window_name(w: Window) -> &'static str {
-    match w { Window::FiveHour => "five_hour", Window::Weekly => "weekly", Window::Spend => "spend" }
+    match w { Window::FiveHour => "five_hour", Window::Weekly => "weekly", Window::Spend => "spend", Window::Monthly => "monthly" }
 }
 
 pub fn render(sessions: &[Session], limits: &[Limit], prefs: ModPrefs, app_version: &str) -> Vec<u8> {

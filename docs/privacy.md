@@ -17,10 +17,11 @@ The app listens only on `127.0.0.1` and requires a random token, stored with its
 
 ### The Claude Code mod
 
-The [mod](agents.md#the-claude-code-mod) inside Claude Code talks to the app over two routes, both on `127.0.0.1` and both needing the Bearer token from `~/.agent-pets/endpoint.json`:
+The [mod](agents.md#the-claude-code-mod) inside Claude Code talks to the app over three routes, all on `127.0.0.1` and both needing the Bearer token from `~/.agent-pets/endpoint.json`:
 
 - **`POST /v1/events/claude-mod`** receives from the mod the session id, working folder, model, context size, cost, how a turn ended and the plan limits (percent used and reset time). No prompts, answers or file contents. A body over 1 MiB is refused, percentages are clamped to 0-100, and an unknown session never creates a pet.
 - **`GET /v1/state`** gives the mod the board for `/pets` and the nudges: the visible sessions (id, agent, state, title, question, working folder and start time) and the limits, plus the mod's two switches (pet and nudges, as plain booleans). Hidden and dismissed sessions are left out. It has no other paths than the working folder, and no process ids, tokens or other settings.
+- **`POST /v1/actions/claude-mod`** carries the `/pets` commands (jump, open the panel, mute, name, pin, clear inactive, the pet and nudges switches) and answers with the outcome: for a jump the target's title and agent, for a mute the time it ends, for a clear the number of pets removed. Only these commands exist; the app checks that a named session is one it shows.
 
 The mod sends only to `127.0.0.1`, keeps the endpoint token in memory and never writes it to disk. It never reads `~/.claude/.credentials.json`; it gets your limits from Claude Code itself.
 

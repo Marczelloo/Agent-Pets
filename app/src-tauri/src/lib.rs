@@ -7,6 +7,7 @@ mod hotkeys;
 mod hotkeys_portal;
 mod jump;
 mod media;
+mod mod_actions;
 mod notify;
 mod panel;
 mod problems;

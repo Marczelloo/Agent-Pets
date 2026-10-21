@@ -6,18 +6,29 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, Windo
 const W: f64 = 400.0;
 const H: f64 = 540.0;
 const MARGIN: f64 = 12.0;
+/// Windows: transparent room around the panel for its CSS shadow. The DWM shadow of a transparent window frames
+/// the whole window the instant it shows, before the page has faded the panel in: an empty box over whatever is
+/// beneath (a white page reads as a white flash). The CSS shadow fades with the panel instead.
+const PAD: f64 = if cfg!(windows) { 16.0 } else { 0.0 };
 const BLUR_GRACE_MS: i64 = 400;
 /// On X11 the compositor may bounce focus right after `set_focus` on a freshly shown window;
 /// a focus-out that close to opening is the compositor, not the user clicking away.
 const BLUR_GUARD_MS: i64 = 300;
+/// The page's closing fade (`panel.html`, `.panel` under `data-panel="closed"`) plays out before the window hides;
+/// the faded-out frame is then also what the next opening shows first, instead of the old panel flashing up.
+const EXIT_MS: u64 = 140;
 
 #[derive(Default)]
-pub struct PanelToggle { visible: bool, blurred_at: Option<i64>, shown_at: i64 }
+pub struct PanelToggle { visible: bool, blurred_at: Option<i64>, shown_at: i64, opened: u64 }
 
 impl PanelToggle {
-    pub fn shown(&mut self) { self.visible = true; self.blurred_at = None; self.shown_at = pets_core::time::now_ms(); }
+    pub fn shown(&mut self) { self.visible = true; self.blurred_at = None; self.shown_at = pets_core::time::now_ms(); self.opened += 1; }
     pub fn blurred(&mut self, now: i64) { self.visible = false; self.blurred_at = Some(now); }
     pub fn hidden(&mut self) { self.visible = false; }
+    /// Which opening a close belongs to: its delayed hide goes ahead only while that is still the last one.
+    pub fn opening(&self) -> u64 { self.opened }
+    /// Whether the hide of a close made during `opening` still stands (no reopening since).
+    pub fn still_closed(&self, opening: u64) -> bool { !self.visible && self.opened == opening }
     /// Whether the panel should be visible after a click. Clicking the icon or stage removes panel focus,
     /// so a click immediately after focus loss means "close", not "close and reopen".
     pub fn toggle(&mut self, now: i64) -> bool {
@@ -61,9 +72,9 @@ pub fn origin_near(stage: Rect, work: Rect, scale: f64) -> (i32, i32) {
 
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let w = WebviewWindowBuilder::new(app, "panel", WebviewUrl::App("panel.html".into()))
-        .title("Agent Pets").inner_size(W, H).decorations(false).transparent(true).always_on_top(true)
+        .title("Agent Pets").inner_size(W + 2.0 * PAD, H + 2.0 * PAD).decorations(false).transparent(true).always_on_top(true)
         // Linux: `resizable(false)` freezes GTK size hints and later resizing is ignored
-        .skip_taskbar(true).resizable(cfg!(target_os = "linux")).shadow(true).visible(false).build()?;
+        .skip_taskbar(true).resizable(cfg!(target_os = "linux")).shadow(PAD == 0.0).visible(false).build()?;
     let a = app.clone();
     w.on_window_event(move |e| if let WindowEvent::Focused(false) = e {
         let st = a.state::<Panel>();
@@ -72,9 +83,9 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
             return;
         }
         p.blurred(pets_core::time::now_ms());
+        let opening = p.opening();
         drop(p);
-        if let Some(win) = a.get_webview_window("panel") { let _ = win.hide(); }
-        let _ = a.emit_to("panel", "panel://visible", false);
+        conceal(&a, opening);
     });
     Ok(())
 }
@@ -97,7 +108,8 @@ fn place(app: &AppHandle) {
             (x, y, scale)
         }
     };
-    crate::shell::place_window(&win, Rect { left: x, top: y, right: x + (W * scale).round() as i32, bottom: y + (H * scale).round() as i32 }, false);
+    let p = (PAD * scale).round() as i32;
+    crate::shell::place_window(&win, Rect { left: x - p, top: y - p, right: x + (W * scale).round() as i32 + p, bottom: y + (H * scale).round() as i32 + p }, false);
 }
 
 pub fn open(app: &AppHandle, focus: Option<String>) {
@@ -106,10 +118,11 @@ pub fn open(app: &AppHandle, focus: Option<String>) {
     let _ = crate::shell::on_main(move || {
         let Some(win) = a.get_webview_window("panel") else { return };
         place(&a);
+        // the page starts its fade-in now, not a round trip after the window appears
+        let _ = a.emit_to("panel", "panel://visible", true);
         let _ = win.show();
         let _ = win.set_focus();
         a.state::<Panel>().0.lock().unwrap().shown();
-        let _ = a.emit_to("panel", "panel://visible", true);
         if let Some(id) = focus { let _ = a.emit_to("panel", "panel://focus", id); }
     });
 }
@@ -121,9 +134,21 @@ pub fn open_with_status(app: &AppHandle, focus: Option<String>, status: String) 
 }
 
 pub fn hide(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("panel") { let _ = win.hide(); }
-    app.state::<Panel>().0.lock().unwrap().hidden();
+    let opening = { let st = app.state::<Panel>(); let mut p = st.0.lock().unwrap(); p.hidden(); p.opening() };
+    conceal(app, opening);
+}
+
+/// The page fades the panel out; the window hides once that is done, unless the panel was opened again meanwhile.
+fn conceal(app: &AppHandle, opening: u64) {
     let _ = app.emit_to("panel", "panel://visible", false);
+    let a = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(EXIT_MS));
+        let _ = crate::shell::on_main(move || {
+            if !a.state::<Panel>().0.lock().unwrap().still_closed(opening) { return; }
+            if let Some(win) = a.get_webview_window("panel") { let _ = win.hide(); }
+        });
+    });
 }
 
 pub fn toggle(app: &AppHandle, focus: Option<String>) {
@@ -149,6 +174,20 @@ mod tests {
         t.blurred(2_000);
         assert!(!t.toggle(2_100), "click just after focus loss: remains closed");
         assert!(t.toggle(3_000), "later click opens");
+    }
+
+    #[test]
+    fn a_reopening_cancels_the_pending_hide_of_the_close_before_it() {
+        let mut t = PanelToggle::default();
+        t.shown();
+        t.blurred(2_000);
+        let close = t.opening();
+        assert!(t.still_closed(close), "nothing since: the window hides after the fade");
+        t.shown();
+        assert!(!t.still_closed(close), "opened during the fade: stays up");
+        t.hidden();
+        assert!(!t.still_closed(close), "a later close hides on its own timer");
+        assert!(t.still_closed(t.opening()));
     }
 
     #[test]

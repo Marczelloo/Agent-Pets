@@ -20,7 +20,6 @@ pub fn diff(prev: &Sample, cur: &Sample) -> Vec<PointerEvent> {
     let mut out = Vec::new();
     if cur.inside {
         if !prev.inside || prev.x != cur.x || prev.y != cur.y { out.push(PointerEvent::Move { x: cur.x, y: cur.y }); }
-        if cur.left && !prev.left && prev.inside { out.push(PointerEvent::Click { x: cur.x, y: cur.y }); }
         if cur.right && !prev.right && prev.inside { out.push(PointerEvent::Context { x: cur.x, y: cur.y }); }
     } else if prev.inside {
         out.push(PointerEvent::Leave);
@@ -59,6 +58,15 @@ impl Dragger {
     }
 }
 
+/// Left click in the taskbar: on release, pressed and released inside, like Windows flyouts. Opening the panel
+/// on the press let the release that followed hand focus back to the taskbar, which closed the panel at once.
+pub fn release_click(d: &mut Dragger, prev: &Sample, cur: &Sample) -> Option<PointerEvent> {
+    d.step(prev, cur).into_iter().find_map(|e| match e {
+        Drag::Click { x, y } if cur.inside => Some(PointerEvent::Click { x, y }),
+        _ => None,
+    })
+}
+
 /// Floating window currently passes clicks through (cursor over empty space): presses are not ours.
 pub static PASSTHROUGH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -93,7 +101,7 @@ pub const FLOATING: u8 = 2;
 pub fn spawn(app: AppHandle, stage: Arc<AtomicIsize>, mode: Arc<AtomicU8>, tx: Sender<super::Cmd>) {
     std::thread::spawn(move || {
         let mut prev = Sample::default();
-        let (mut moving, mut floating) = (Dragger::new(0), Dragger::new(4));
+        let (mut moving, mut floating, mut clicking) = (Dragger::new(0), Dragger::new(4), Dragger::new(4));
         let mut keys = Keys::default();
         loop {
             std::thread::sleep(Duration::from_millis(30));
@@ -111,9 +119,7 @@ pub fn spawn(app: AppHandle, stage: Arc<AtomicIsize>, mode: Arc<AtomicU8>, tx: S
                     keys.step(false, (false, false));
                     // clicking empty space goes to the window beneath, not the stage
                     let cur = if PASSTHROUGH.load(Ordering::Relaxed) { Sample { left: false, right: false, ..cur } } else { cur };
-                    for e in diff(&prev, &cur) {
-                        if !matches!(e, PointerEvent::Click { .. }) { let _ = app.emit("pets://pointer", e); }
-                    }
+                    for e in diff(&prev, &cur) { let _ = app.emit("pets://pointer", e); }
                     for d in floating.step(&prev, &cur) {
                         match d {
                             Drag::Click { x, y } => { let _ = app.emit("pets://pointer", PointerEvent::Click { x, y }); }
@@ -124,8 +130,11 @@ pub fn spawn(app: AppHandle, stage: Arc<AtomicIsize>, mode: Arc<AtomicU8>, tx: S
                 _ => {
                     keys.step(false, (false, false));
                     for e in diff(&prev, &cur) { let _ = app.emit("pets://pointer", e); }
+                    if let Some(c) = release_click(&mut clicking, &prev, &cur) { let _ = app.emit("pets://pointer", c); }
                 }
             }
+            // a press still held when the mode changed must not click once the stage is back in the taskbar
+            if m != NORMAL { clicking = Dragger::new(4); }
             prev = cur;
         }
     });
@@ -215,13 +224,21 @@ mod tests {
     }
 
     #[test]
-    fn click_only_on_the_press_edge_inside() {
+    fn taskbar_click_fires_on_release_not_on_press() {
+        let mut d = Dragger::new(4);
         let down = Sample { left: true, ..at(5.0, 5.0) };
-        assert_eq!(diff(&at(5.0, 5.0), &down), vec![PointerEvent::Click { x: 5.0, y: 5.0 }]);
-        assert!(diff(&down, &down).is_empty());
-        // pressed outside the stage and dragged inside: this is not a click
+        assert!(diff(&at(5.0, 5.0), &down).is_empty(), "the press itself is not a click");
+        assert_eq!(release_click(&mut d, &at(5.0, 5.0), &down), None);
+        assert_eq!(release_click(&mut d, &down, &down), None, "held");
+        assert_eq!(release_click(&mut d, &down, &at(6.0, 5.0)), Some(PointerEvent::Click { x: 6.0, y: 5.0 }));
+        // released outside the stage: no click
+        assert_eq!(release_click(&mut d, &at(5.0, 5.0), &down), None);
+        let out = Sample { inside: false, ..at(5.0, 5.0) };
+        assert_eq!(release_click(&mut d, &down, &out), None);
+        // pressed outside the stage and released inside: no click
         let outside_down = Sample { inside: false, left: true, ..Sample::default() };
-        assert_eq!(diff(&outside_down, &down), vec![PointerEvent::Move { x: 5.0, y: 5.0 }]);
+        assert_eq!(release_click(&mut d, &Sample::default(), &outside_down), None);
+        assert_eq!(release_click(&mut d, &outside_down, &at(5.0, 5.0)), None);
     }
 
     #[test]

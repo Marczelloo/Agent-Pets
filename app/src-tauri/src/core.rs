@@ -161,6 +161,7 @@ fn live(app: &AppHandle, msgs: std::sync::mpsc::Receiver<CoreMsg>, publish: &dyn
     cfg.apps = app.state::<crate::settings::SettingsState>().get().apps;
     cfg.lang = pets_core::i18n::current(app.state::<crate::settings::SettingsState>().get().language);
     let mut prefs = crate::mod_prefs_of(&app.state::<crate::settings::SettingsState>().get());
+    cfg.desk = Some(crate::mod_actions::desk(app));
     let mut rt = Runtime::start(cfg)?;
     let board = rt.state_board();
     // claude account limits from the Anthropic server (exact reset times, independent of CLI sessions), only with consent

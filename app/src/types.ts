@@ -52,7 +52,7 @@ export interface SubInfo { kind: SubKind; agent_type: string | null; description
 export interface RouterTask { task_id: string; status: string; last_activity_at: number | null; blocked: boolean; stall_ms: number }
 
 /** `stale_since`: time of the last real reading when the value is old (the Claude app stopped polling). */
-export interface Limit { agent: Agent; window: 'five_hour' | 'weekly' | 'spend'; used_pct: number; resets_at: number | null; stale_since?: number | null }
+export interface Limit { agent: Agent; window: 'five_hour' | 'weekly' | 'spend' | 'monthly'; used_pct: number; resets_at: number | null; stale_since?: number | null }
 /** Session tokens and cost from the agent database (opencode only since 0.11); `account` = account whose limits apply. */
 export interface Usage { tokens: number; cost: number; account: Agent | null }
 /** Agent's daily total (since local midnight). */

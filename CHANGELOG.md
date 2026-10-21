@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.19.0
+
+### Added
+
+- `/pets` commands in the Claude Code mod control the widget from the prompt, also while a turn runs: `/pets jump` goes to the agent that needs you, `panel` opens the panel on this session, `mute [1h|8|forever]` / `unmute`, `name [text]`, `pin` / `unpin`, `clear` removes inactive pets, and `pet on|off` / `nudges on|off` switch the mod. `/pets help` lists them. They go through a new `POST /v1/actions/claude-mod` (localhost, with the token).
+- A Codex account on the free plan shows its limit again: the free plan has a single monthly window instead of 5 h and weekly, and it now gets its own "monthly" row in the panel, a bar on the taskbar, the tooltip and notifications. Switching plans swaps the windows by the newest reading.
+
+### Fixed
+
+- Clicking a pet in the taskbar no longer sometimes opens the panel only for it to vanish at once: the click now counts on release, like Windows flyouts, so letting go of the button no longer hands focus back to the taskbar.
+- The panel opens and closes smoothly: it rises and fades in, and fades out before the window hides, with no white or empty frame flashing up first.
+- A Codex pet no longer stays in the question pose with its bubble after you answer: work Codex does while it waits for the answer shows as work, and the answer ends the wait.
+
 ## 0.18.0
 
 ### Added

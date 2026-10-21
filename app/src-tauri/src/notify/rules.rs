@@ -98,8 +98,8 @@ fn limit_toast(l: &Limit, lang: Lang) -> Toast {
         return Toast { kind: ToastKind::Limit, session_id: None, title, body };
     }
     let (title, body) = match lang {
-        Lang::Pl => { let w = match l.window { Window::FiveHour => "5h", Window::Weekly => "tygodniowy", Window::Spend => "wydatków" }; (format!("{who}: limit {w}"), format!("Zużyto {:.0}% limitu {w}", l.used_pct)) }
-        Lang::En => { let w = match l.window { Window::FiveHour => "5h", Window::Weekly => "weekly", Window::Spend => "spend" }; (format!("{who}: {w} limit"), format!("{:.0}% of the {w} limit used", l.used_pct)) }
+        Lang::Pl => { let w = match l.window { Window::FiveHour => "5h", Window::Weekly => "tygodniowy", Window::Spend => "wydatków", Window::Monthly => "miesięczny" }; (format!("{who}: limit {w}"), format!("Zużyto {:.0}% limitu {w}", l.used_pct)) }
+        Lang::En => { let w = match l.window { Window::FiveHour => "5h", Window::Weekly => "weekly", Window::Spend => "spend", Window::Monthly => "monthly" }; (format!("{who}: {w} limit"), format!("{:.0}% of the {w} limit used", l.used_pct)) }
     };
     Toast { kind: ToastKind::Limit, session_id: None, title, body }
 }
@@ -111,8 +111,8 @@ fn limit_early_toast(agent: Agent, window: Window, runs_out_at: i64, resets_at: 
     // a bare HH:MM for a reset days away (weekly windows) would read as today
     let far = resets_at - runs_out_at > EARLY_FAR_MS;
     let (title, body) = match lang {
-        Lang::Pl => { let w = match window { Window::FiveHour => "5h", Window::Weekly => "tygodniowy", Window::Spend => "wydatków" }; (format!("{who}: limit {w} kończy się"), if far { format!("W tym tempie skończy się ok. {out}, na długo przed resetem") } else { format!("W tym tempie skończy się ok. {out}, przed resetem o {reset}") }) }
-        Lang::En => { let w = match window { Window::FiveHour => "5h", Window::Weekly => "weekly", Window::Spend => "spend" }; (format!("{who}: {w} limit running out"), if far { format!("At this pace it runs out around {out}, long before the reset") } else { format!("At this pace it runs out around {out}, before the {reset} reset") }) }
+        Lang::Pl => { let w = match window { Window::FiveHour => "5h", Window::Weekly => "tygodniowy", Window::Spend => "wydatków", Window::Monthly => "miesięczny" }; (format!("{who}: limit {w} kończy się"), if far { format!("W tym tempie skończy się ok. {out}, na długo przed resetem") } else { format!("W tym tempie skończy się ok. {out}, przed resetem o {reset}") }) }
+        Lang::En => { let w = match window { Window::FiveHour => "5h", Window::Weekly => "weekly", Window::Spend => "spend", Window::Monthly => "monthly" }; (format!("{who}: {w} limit running out"), if far { format!("At this pace it runs out around {out}, long before the reset") } else { format!("At this pace it runs out around {out}, before the {reset} reset") }) }
     };
     Toast { kind: ToastKind::Limit, session_id: None, title, body }
 }
@@ -121,8 +121,8 @@ fn limit_early_toast(agent: Agent, window: Window, runs_out_at: i64, resets_at: 
 fn limit_back_toast(agent: Agent, window: Window, lang: Lang) -> Toast {
     let who = who(agent);
     let (title, body) = match lang {
-        Lang::Pl => { let w = match window { Window::FiveHour => "5h", Window::Weekly => "tygodniowy", Window::Spend => "wydatków" }; (format!("{who}: limit {w} odnowiony"), format!("Limit {w} znów jest dostępny")) }
-        Lang::En => { let w = match window { Window::FiveHour => "5h", Window::Weekly => "weekly", Window::Spend => "spend" }; (format!("{who}: {w} limit reset"), format!("The {w} limit is available again")) }
+        Lang::Pl => { let w = match window { Window::FiveHour => "5h", Window::Weekly => "tygodniowy", Window::Spend => "wydatków", Window::Monthly => "miesięczny" }; (format!("{who}: limit {w} odnowiony"), format!("Limit {w} znów jest dostępny")) }
+        Lang::En => { let w = match window { Window::FiveHour => "5h", Window::Weekly => "weekly", Window::Spend => "spend", Window::Monthly => "monthly" }; (format!("{who}: {w} limit reset"), format!("The {w} limit is available again")) }
     };
     Toast { kind: ToastKind::Limit, session_id: None, title, body }
 }

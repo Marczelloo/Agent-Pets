@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Session, State } from '../types';
 import { setLang } from '../i18n';
+import { limitBars } from '../stage/hud';
 import { CHILD_DONE_MS, activeCount, collapseChildren, contextPct, limitCards, limitsAlert, childLabels, childLine, childMark, childrenOf, clock, contextText, hasInactive, limitRows, panelSessions, progressText, renameKey, renameResult, sessionSubtitle, usageLine } from './model';
 
 const s = (id: string, state: State, last: number): Session => ({
@@ -67,6 +68,13 @@ describe('panel model', () => {
     expect(rows.map(r => `${r.agent}/${r.window}`)).toEqual(['claude/five_hour', 'claude/weekly', 'codex/five_hour', 'codex/weekly']);
     expect(rows[0].pct).toBeNull();
     expect(rows[3].pct).toBe(91);
+  });
+  it('shows a single monthly row for Codex on a free plan', () => {
+    const now = new Date(2026, 8, 24, 12, 0).getTime();
+    const rows = limitRows([{ agent: 'codex', window: 'monthly', used_pct: 7, resets_at: null }], now);
+    expect(rows.map(r => `${r.agent}/${r.window}`)).toEqual(['claude/five_hour', 'claude/weekly', 'codex/monthly']);
+    expect(rows[2]).toMatchObject({ pct: 7, label: 'Codex · miesiąc' });
+    expect(limitBars([{ agent: 'codex', window: 'monthly', used_pct: 7, resets_at: null }]).map(b => b.window)).toEqual(['monthly']);
   });
   it('adds Antigravity rows only for windows it reported', () => {
     const now = new Date(2026, 8, 24, 12, 0).getTime();

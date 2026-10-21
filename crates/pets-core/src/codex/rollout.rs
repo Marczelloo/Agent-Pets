@@ -60,7 +60,8 @@ const ASYNC_ASK: &str = "request_user_input_async";
 fn limits_from(rl: &Value) -> Vec<Limit> {
     ["primary", "secondary"].iter().filter_map(|k| {
         let w = rl.get(*k)?;
-        let window = match w.get("window_minutes")?.as_u64()? { 300 => Window::FiveHour, 10080 => Window::Weekly, _ => return None };
+        // the free plan has a single monthly window (28–31 days) instead of 5 h and weekly
+        let window = match w.get("window_minutes")?.as_u64()? { 300 => Window::FiveHour, 10080 => Window::Weekly, 40_320..=44_640 => Window::Monthly, _ => return None };
         Some(Limit {
             agent: Agent::Codex,
             window,
@@ -94,8 +95,11 @@ pub struct RolloutParser {
     skip: bool,
     router: bool,
     titled: bool,
-    /// After `request_user_input_async`, the turn ends without an answer; wait for the next turn (user response).
-    waiting: bool,
+    /// Question from `request_user_input_async` not answered yet. Codex keeps working meanwhile, so work shows as work,
+    /// but a turn that ends before the answer is still waiting for you (the answer arrives as a message or a new turn).
+    pending: Option<Option<String>>,
+    /// Call of that question: its immediate "accepted" output is not the answer.
+    ask_call: Option<String>,
     /// Current file line number.
     line: usize,
     /// Child thread with history copied from parent (`subagent_history_start_ordinal`): own lines from this point.
@@ -112,7 +116,7 @@ impl RolloutParser {
     pub fn new() -> Self { Self::default() }
 
     pub fn with_lang(lang: Lang) -> Self {
-        RolloutParser { lang, sid: None, parent: None, skip: false, router: false, titled: false, waiting: false, line: 0, skip_until: 0, model: None }
+        RolloutParser { lang, sid: None, parent: None, skip: false, router: false, titled: false, pending: None, ask_call: None, line: 0, skip_until: 0, model: None }
     }
 
     fn ev(&self, kind: Kind, ts: i64) -> Option<Event> {
@@ -131,9 +135,16 @@ impl RolloutParser {
         self.ev(Kind::ToolStart, ts).map(|mut e| { e.tool = Some(tool); e.data.action = action; vec![e] }).unwrap_or_default()
     }
 
-    fn ask(&mut self, name: &str, question: Option<String>, ts: i64) -> Vec<Event> {
-        self.waiting = name == ASYNC_ASK;
+    fn ask(&mut self, name: &str, call: Option<&str>, question: Option<String>, ts: i64) -> Vec<Event> {
         let question = if name == "request_permissions" { Some(tr(self.lang, "Zgoda?", "Allow?").to_string()) } else { question };
+        if name == ASYNC_ASK {
+            self.pending = Some(question.clone());
+            self.ask_call = Some(call.unwrap_or("").to_string());
+        }
+        self.needs_input(question, ts)
+    }
+
+    fn needs_input(&self, question: Option<String>, ts: i64) -> Vec<Event> {
         self.ev(Kind::NeedsInput, ts).map(|mut e| { e.data.question = question; vec![e] }).unwrap_or_default()
     }
 
@@ -207,12 +218,24 @@ impl RolloutParser {
 
         if self.skip { return vec![]; }
         if self.sid.is_none() { return vec![]; }
-        if self.waiting {
+        if self.pending.is_some() {
+            let user_message = pt == "user_message" || p.pointer("/item/type").and_then(|v| v.as_str()) == Some("UserMessage");
             match (ty, pt) {
-                ("event_msg", "task_started") => self.waiting = false,
-                // context and limits still count; state remains "waiting for you"
-                ("event_msg", "token_count") => {}
-                _ => return vec![],
+                // the question's own "accepted" output is not the answer
+                ("response_item", "custom_tool_call_output") | ("response_item", "function_call_output")
+                    if self.ask_call.as_deref().is_some_and(|c| c.is_empty() || ps("call_id") == Some(c)) => {
+                    self.ask_call = None;
+                    return vec![];
+                }
+                // the answer: a message during the turn, or a new turn
+                ("event_msg", _) if user_message => {
+                    (self.pending, self.ask_call) = (None, None);
+                    return self.one(ts, Kind::Prompt);
+                }
+                ("event_msg", "task_started") | ("event_msg", "turn_aborted") => (self.pending, self.ask_call) = (None, None),
+                // the turn ended before the answer: still waiting for you
+                ("event_msg", "task_complete") => return self.needs_input(self.pending.clone().flatten(), ts),
+                _ => {}
             }
         }
 
@@ -270,7 +293,7 @@ impl RolloutParser {
                         let name = if calls.iter().any(|c| c == ASYNC_ASK) { ASYNC_ASK } else { ask.as_str() };
                         let q = js_string_field(src, &["question", "title"])
                             .and_then(|q| question_text(None, None, Some(&json!({"questions": [{"question": q}]})), self.lang));
-                        return self.ask(name, q, ts);
+                        return self.ask(name, ps("call_id"), q, ts);
                     }
                     match calls.iter().find_map(|c| from_codex(c).map(|t| (c, t))) {
                         Some((c, t)) => { let a = self.js_action(c, src); self.tool_start(t, a, ts) }
@@ -285,7 +308,7 @@ impl RolloutParser {
                 let args: Value = serde_json::from_str(ps("arguments").unwrap_or("{}")).unwrap_or(Value::Null);
                 if ASK.contains(&name) {
                     let q = question_text(None, None, Some(&args), self.lang);
-                    return self.ask(name, q, ts);
+                    return self.ask(name, ps("call_id"), q, ts);
                 }
                 if name == "update_plan" {
                     let Some(plan) = args.get("plan").and_then(|v| v.as_array()) else { return vec![] };
@@ -459,9 +482,44 @@ mod tests {
         let e = p.parse_line(&l("response_item", json!({"type": "function_call", "name": "request_user_input_async", "arguments": "{}"})));
         assert_eq!(kinds(e), vec![Kind::NeedsInput]);
         assert!(p.parse_line(&l("response_item", json!({"type": "function_call_output", "output": "{\"accepted\":true}"}))).is_empty());
-        assert!(p.parse_line(&l("event_msg", json!({"type": "task_complete"}))).is_empty(), "still waiting for an answer");
+        assert_eq!(kinds(p.parse_line(&l("event_msg", json!({"type": "task_complete"})))), vec![Kind::NeedsInput], "still waiting for an answer");
         assert_eq!(kinds(p.parse_line(&l("event_msg", json!({"type": "task_started"})))), vec![Kind::Prompt]);
         assert_eq!(kinds(p.parse_line(&l("event_msg", json!({"type": "task_complete"})))), vec![Kind::TurnEnd]);
+    }
+
+    #[test]
+    fn work_after_an_async_question_shows_as_work_and_the_answer_ends_the_wait() {
+        // Codex keeps working in the same turn after `request_user_input_async`; the answer arrives during the turn
+        let mut p = RolloutParser::with_lang(Lang::Pl);
+        started(&mut p);
+        let kinds = |e: Vec<Event>| e.into_iter().map(|e| e.kind).collect::<Vec<_>>();
+        let ask = json!({"type": "function_call", "name": "request_user_input_async", "call_id": "q1",
+            "arguments": "{\"questions\":[{\"question\":\"Który wariant?\"}]}"});
+        assert_eq!(kinds(p.parse_line(&l("response_item", ask))), vec![Kind::NeedsInput]);
+        assert!(p.parse_line(&l("response_item", json!({"type": "function_call_output", "call_id": "q1", "output": "{\"accepted\":true}"}))).is_empty(),
+            "the immediate acceptance is not an answer");
+        let sh = json!({"type": "function_call", "name": "shell", "call_id": "c2", "arguments": "{\"command\":[\"ls\"]}"});
+        assert_eq!(kinds(p.parse_line(&l("response_item", sh))), vec![Kind::ToolStart], "independent work shows as work");
+        assert_eq!(kinds(p.parse_line(&l("response_item", json!({"type": "function_call_output", "call_id": "c2", "output": "ok"})))), vec![Kind::ToolEnd]);
+        let answer = json!({"type": "item_completed", "item": {"type": "UserMessage", "content": [{"type": "text", "text": "A"}]}});
+        assert_eq!(kinds(p.parse_line(&l("event_msg", answer))), vec![Kind::Prompt], "the answer brings it back to work");
+        let patch = json!({"type": "custom_tool_call", "name": "apply_patch", "call_id": "c3", "input": "*** Begin Patch\n*** Update File: a.rs\n*** End Patch"});
+        assert_eq!(kinds(p.parse_line(&l("response_item", patch))), vec![Kind::ToolStart]);
+        assert_eq!(kinds(p.parse_line(&l("event_msg", json!({"type": "task_complete"})))), vec![Kind::TurnEnd], "answered: the turn ends as done");
+    }
+
+    #[test]
+    fn a_turn_ending_before_the_answer_asks_again_with_the_question() {
+        let mut p = RolloutParser::with_lang(Lang::Pl);
+        started(&mut p);
+        p.parse_line(&l("response_item", json!({"type": "function_call", "name": "request_user_input_async", "call_id": "q1",
+            "arguments": "{\"questions\":[{\"question\":\"Który wariant?\"}]}"})));
+        p.parse_line(&l("response_item", json!({"type": "function_call", "name": "shell", "call_id": "c2", "arguments": "{\"command\":[\"ls\"]}"})));
+        let e = p.parse_line(&l("event_msg", json!({"type": "task_complete"})));
+        assert_eq!((e[0].kind, e[0].data.question.as_deref()), (Kind::NeedsInput, Some("Pytanie: Który wariant?")));
+        let e = p.parse_line(&l("event_msg", json!({"type": "user_message", "message": "A"})));
+        assert_eq!(e[0].kind, Kind::Prompt, "an answer as a user message ends the wait too");
+        assert!(p.parse_line(&l("event_msg", json!({"type": "user_message", "message": "B"}))).is_empty(), "later messages are not answers");
     }
 
     #[test]
@@ -485,6 +543,15 @@ mod tests {
         let e = p.parse_line(&l("event_msg", json!({"type": "token_count",
             "rate_limits": {"primary": {"used_percent": 71.0, "window_minutes": 10080, "resets_at": 1}}})));
         assert_eq!(e[0].data.limits[0].window, Window::Weekly);
+    }
+
+    #[test]
+    fn the_free_plan_has_a_monthly_window() {
+        let mut p = RolloutParser::new();
+        started(&mut p);
+        let e = p.parse_line(&l("event_msg", json!({"type": "token_count",
+            "rate_limits": {"primary": {"used_percent": 4.0, "window_minutes": 43200, "resets_at": 1}, "secondary": null}})));
+        assert_eq!((e[0].data.limits.len(), e[0].data.limits[0].window, e[0].data.limits[0].used_pct), (1, Window::Monthly, 4.0));
     }
 
     #[test]

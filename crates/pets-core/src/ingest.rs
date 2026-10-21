@@ -5,6 +5,7 @@ use std::sync::{Arc, RwLock};
 use std::thread::JoinHandle;
 use crate::claude::{plugin::ModPayload, HookEnvelope};
 use crate::endpoint::Endpoint;
+use crate::mod_action::{Desk, ModReply};
 
 #[allow(clippy::large_enum_variant)] // short-lived values passed by move; boxing would only add noise
 pub enum Incoming {
@@ -66,6 +67,11 @@ impl Ingest {
     /// `doors`: which settings-controlled routes are open (door, Copilot, Antigravity); changed live.
     /// `board`: bytes returned by `GET /v1/state` (read on each request).
     pub fn start(token: String, tx: Sender<Incoming>, doors: Arc<Doors>, board: StateBoard) -> anyhow::Result<Ingest> {
+        Self::start_with_desk(token, tx, doors, board, None)
+    }
+
+    /// `desk`: where `POST /v1/actions/claude-mod` hands the mod's commands; without one the route is absent.
+    pub fn start_with_desk(token: String, tx: Sender<Incoming>, doors: Arc<Doors>, board: StateBoard, desk: Option<Desk>) -> anyhow::Result<Ingest> {
         let server = Arc::new(tiny_http::Server::http("127.0.0.1:0").map_err(|e| anyhow::anyhow!(e))?);
         let port = server.server_addr().to_ip().map(|a| a.port()).ok_or_else(|| anyhow::anyhow!("no port"))?;
         let endpoint = Endpoint { port, token: token.clone() };
@@ -74,7 +80,7 @@ impl Ingest {
         let handle = std::thread::spawn(move || {
             let expected = format!("Bearer {token}");
             for mut req in srv.incoming_requests() {
-                let (status, body) = handle_request(&mut req, &expected, &tx, &doors, &board);
+                let (status, body) = handle_request(&mut req, &expected, &tx, &doors, &board, desk.as_ref());
                 let _ = match body {
                     Some(b) => {
                         let json = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).expect("static header");
@@ -109,12 +115,38 @@ fn authorized(req: &tiny_http::Request, expected: &str) -> bool {
     auth.as_deref() == Some(expected)
 }
 
-fn handle_request(req: &mut tiny_http::Request, expected: &str, tx: &Sender<Incoming>, doors: &Doors, board: &StateBoard) -> (u16, Option<Vec<u8>>) {
+fn handle_request(req: &mut tiny_http::Request, expected: &str, tx: &Sender<Incoming>, doors: &Doors, board: &StateBoard, desk: Option<&Desk>) -> (u16, Option<Vec<u8>>) {
     if *req.method() == tiny_http::Method::Get && req.url() == "/v1/state" {
         if !authorized(req, expected) { return (401, None); }
         return (200, Some(board.read().unwrap_or_else(|e| e.into_inner()).clone()));
     }
+    if *req.method() == tiny_http::Method::Post && req.url() == "/v1/actions/claude-mod" {
+        return match desk { Some(d) => handle_action(req, expected, d), None => (404, None) };
+    }
     (handle_post(req, expected, tx, doors), None)
+}
+
+/// How long a command may take before the mod hears 503; the app answers at once and does slow work (a jump) afterwards.
+const ACTION_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+fn handle_action(req: &mut tiny_http::Request, expected: &str, desk: &Desk) -> (u16, Option<Vec<u8>>) {
+    if !authorized(req, expected) { return (401, None); }
+    let body = match read_body(req) { Ok(b) => b, Err(code) => return (code, None) };
+    let Some(action) = crate::mod_action::parse(&body) else { return (400, None) };
+    let (reply_tx, reply) = std::sync::mpsc::channel::<ModReply>();
+    if desk.send((action, reply_tx)).is_err() { return (503, None); }
+    match reply.recv_timeout(ACTION_WAIT) {
+        Ok(r) => (200, serde_json::to_vec(&r).ok()),
+        Err(_) => (503, None),
+    }
+}
+
+fn read_body(req: &mut tiny_http::Request) -> Result<Vec<u8>, u16> {
+    if req.body_length().map(|l| l as u64 > MAX_BODY).unwrap_or(false) { return Err(413); }
+    let mut body = Vec::new();
+    if req.as_reader().take(MAX_BODY + 1).read_to_end(&mut body).is_err() { return Err(400); }
+    if body.len() as u64 > MAX_BODY { return Err(413); }
+    Ok(body)
 }
 
 fn handle_post(req: &mut tiny_http::Request, expected: &str, tx: &Sender<Incoming>, doors: &Doors) -> u16 {
@@ -134,10 +166,7 @@ fn handle_post(req: &mut tiny_http::Request, expected: &str, tx: &Sender<Incomin
         _ => return 404,
     };
     if !authorized(req, expected) { return 401; }
-    if req.body_length().map(|l| l as u64 > MAX_BODY).unwrap_or(false) { return 413; }
-    let mut body = Vec::new();
-    if req.as_reader().take(MAX_BODY + 1).read_to_end(&mut body).is_err() { return 400; }
-    if body.len() as u64 > MAX_BODY { return 413; }
+    let body = match read_body(req) { Ok(b) => b, Err(code) => return code };
     let msg = match route {
         Route::ClaudeMod => serde_json::from_slice::<ModPayload>(&body).ok().filter(|p| p.v == 1).map(Incoming::ClaudeMod),
         Route::Claude => serde_json::from_slice::<HookEnvelope>(&body).ok().map(Incoming::ClaudeHook),
@@ -295,6 +324,39 @@ mod tests {
         let big = format!(r#"{{"v":1,"kind":"measure","session_id":"s","cwd":"{}"}}"#, "x".repeat(1 << 20));
         assert_eq!(post(port, "/v1/events/claude-mod", "secret", &big), 413);
         assert!(rx.try_recv().is_err(), "only the valid payload reached the channel");
+        ing.stop();
+    }
+
+    #[test]
+    fn action_route_hands_commands_to_the_desk_and_returns_its_reply() {
+        let (tx, _rx) = channel();
+        let (desk, orders) = channel::<(crate::mod_action::ModAction, Sender<ModReply>)>();
+        let ing = Ingest::start_with_desk("secret".into(), tx, door(false), board(), Some(desk)).unwrap();
+        let port = ing.endpoint().port;
+        let clerk = std::thread::spawn(move || {
+            let (action, reply) = orders.recv().unwrap();
+            assert_eq!(action, crate::mod_action::ModAction::Clear);
+            reply.send(ModReply { count: Some(3), ..ModReply::done() }).unwrap();
+        });
+        let send = |token: &str, body: &str| match ureq::post(&format!("http://127.0.0.1:{port}/v1/actions/claude-mod"))
+            .set("Authorization", &format!("Bearer {token}")).timeout(Duration::from_secs(4)).send_string(body) {
+            Ok(r) => (r.status(), r.into_string().unwrap()),
+            Err(ureq::Error::Status(c, _)) => (c, String::new()),
+            Err(e) => panic!("{e}"),
+        };
+        assert_eq!(send("bad", r#"{"v":1,"action":"clear"}"#).0, 401);
+        assert_eq!(send("secret", r#"{"v":1,"action":"nope"}"#).0, 400);
+        assert_eq!(send("secret", r#"{"v":1,"action":"clear"}"#), (200, r#"{"ok":true,"count":3}"#.to_string()));
+        clerk.join().unwrap();
+        assert_eq!(send("secret", r#"{"v":1,"action":"clear"}"#).0, 503, "nobody at the desk");
+        ing.stop();
+    }
+
+    #[test]
+    fn without_a_desk_the_action_route_is_not_there() {
+        let (tx, _rx) = channel();
+        let ing = Ingest::start("secret".into(), tx, door(false), board()).unwrap();
+        assert_eq!(post(ing.endpoint().port, "/v1/actions/claude-mod", "secret", r#"{"v":1,"action":"clear"}"#), 404);
         ing.stop();
     }
 

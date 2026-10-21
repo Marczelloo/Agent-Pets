@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 const html = readFileSync(fileURLToPath(new URL('../../panel.html', import.meta.url)), 'utf8');
 const css = (html.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? '').replace(/\/\*[\s\S]*?\*\//g, '');
-const rules = [...css.matchAll(/(?:^|\})\s*([^{}@]+)\{([^}]*)\}/g)].map(m => ({ sel: m[1].trim(), body: m[2] }));
+const rules = [...css.matchAll(/(?<=^|\})\s*([^{}@]+)\{([^}]*)\}/g)].map(m => ({ sel: m[1].trim(), body: m[2] }));
 
 describe('panel.html styles', () => {
   it('defines every selector once, so a later copy cannot silently override the earlier one', () => {
