@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.1
+
+### Changed
+
+- Releases are easier to check: each one lists the SHA-256 of every file in `SHA256SUMS.txt` and carries a GitHub build provenance attestation, so `gh attestation verify <file> --repo Marczelloo/agent-pets` confirms a download was built by the release workflow from this repository.
+
 ## 0.19.0
 
 ### Added

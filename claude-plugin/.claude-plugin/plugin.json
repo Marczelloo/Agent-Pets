@@ -1,6 +1,6 @@
 {
   "name": "agent-pets",
-  "version": "0.19.0",
+  "version": "0.19.1",
   "author": { "name": "Marczelloo" },
   "description": "Agent Pets: live limits for the Agent Pets widget, /pets, nudges about other agents and a pixel pet above the prompt.",
   "types": "./types/index.d.ts"
