@@ -29,7 +29,8 @@ const boardWith = (prefs: { pet?: boolean; nudges?: boolean } = {}) => ({
 })
 
 // Everything beneath the plugin: the clock, the widget's board (and its endpoint file), what the engine answers to the events the pet watches, core's own band
-// (an empty Box keyed `core`) and the blits. The test steers what a blit answers through `w.blit`, and holds a tool open with `w.gate`.
+// (an empty Box keyed `core`) and the blits. The test steers what a blit answers through `w.blit` and the permission verdict through `w.verdict`, and holds a
+// tool open with `w.gate`.
 function world(on: On, opts: Opts = {}) {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { USERPROFILE: 'C:\\Users\\tester' })
@@ -41,7 +42,6 @@ function world(on: On, opts: Opts = {}) {
   on('session.start', ($$, e) => ({ cwd: e.cwd }))
   on('prompt.submit', ($$, e) => ({ text: e.text, ...(opts.drop ? { drop: 'no' } : {}) }) as never)
   on('turn.complete', ($$, e) => ({ text: e.answer }) as never)
-  on('tool.check', () => ({ decision: opts.verdict ?? 'allow' }))
   const w = {
     clock,
     // What the widget answers to `GET /v1/state`: a board, or 'down' for no widget. A test changes it between ticks.
@@ -51,6 +51,8 @@ function world(on: On, opts: Opts = {}) {
     attempts: 0,
     blit: 'ok' as 'ok' | 'deny' | 'throw',
     gate: undefined as Promise<void> | undefined,
+    // The engine checks a call before it runs it: with `ask` a `$.tool.call` waits for the user and never runs.
+    verdict: opts.verdict ?? 'allow',
     stall: false,
     stateFails: false,
   }
@@ -60,6 +62,7 @@ function world(on: On, opts: Opts = {}) {
     return next(e)
   })
   on('state.set', async ($$, e, next) => (w.stateFails ? { deny: 'EIO' } : next(e)))
+  on('tool.check', () => ({ decision: w.verdict }))
   on('tool.call', async () => {
     await w.gate
     return { result: 'ok' } as never
@@ -284,7 +287,7 @@ test('the board is read at most every 30 s for the pet, not on every 200 ms tick
 })
 
 test('a prompt, a tool, a permission ask and an answer take the pet through its states', async ($, on) => {
-  const w = world(on, { verdict: 'ask' })
+  const w = world(on)
   await startTerminal($)
   const ui = await mountBand($)
   expect(await says(ui)).toBe('')
@@ -298,6 +301,7 @@ test('a prompt, a tool, a permission ask and an answer take the pet through its 
   release()
   await call
   expect(await says(ui)).toBe('thinking\u2026')
+  w.verdict = 'ask'
   await $.tool.check({ tool: 'Bash', input: { command: 'rm -rf x' }, tool_use_id: 'tu1' } as never)
   expect(await says(ui)).toBe('waiting for you')
   await complete($, 'answer')
