@@ -2,6 +2,8 @@
 
 Thanks for wanting to help. Bug reports, ideas and pull requests are all welcome.
 
+Looking for a place to start? Issues labelled [good first issue](https://github.com/Marczelloo/agent-pets/labels/good%20first%20issue) need no deep knowledge of the code. Questions and ideas go to [Discussions](https://github.com/Marczelloo/agent-pets/discussions).
+
 ## Before you open a pull request
 
 - Open an issue first for anything bigger than a small fix, so we can agree on the approach.

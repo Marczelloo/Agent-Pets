@@ -98,7 +98,7 @@ From 0.17 on, release installers are built from this repository by the [release 
 - Committers and reviewers: [Marczelloo](https://github.com/Marczelloo)
 - Approvers: [Marczelloo](https://github.com/Marczelloo)
 
-Every release is also signed for the in-app updater, which installs only an update with a valid signature. [Privacy](docs/privacy.md) lists every network call the app makes; it sends no other data anywhere.
+Every release is also signed for the in-app updater, which installs only an update with a valid signature. Releases after 0.19.0 list the SHA-256 of every file in `SHA256SUMS.txt` and carry a [build provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds): `gh attestation verify <file> --repo Marczelloo/agent-pets` confirms the file was built by the release workflow from this repository. [Privacy](docs/privacy.md) lists every network call the app makes; it sends no other data anywhere.
 
 ## Documentation
 

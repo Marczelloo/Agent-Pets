@@ -2,6 +2,8 @@
 # plus the Linux packages (.deb, .rpm, .AppImage; no auto-update there yet).
 # A v* tag drafts a GitHub release with all the files; run it by hand for a build without a release (the files are
 # kept as a workflow artifact). Nothing is published: a maintainer reviews the draft and publishes it.
+# A tagged build also attaches SHA256SUMS.txt and a build provenance attestation for every file people install
+# (gh attestation verify <file> --repo Marczelloo/agent-pets).
 #
 # Secrets and variables (Settings → Secrets and variables → Actions):
 #   TAURI_SIGNING_PRIVATE_KEY   secret, required: the updater key (~/.tauri/agent-pets.key, no password)
@@ -31,6 +33,8 @@ jobs:
     permissions:
       contents: write # the draft release
       actions: read # SignPath downloads the unsigned files from this run's artifacts
+      id-token: write # build provenance attestation
+      attestations: write
     env:
       SIGN: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
     steps:
@@ -178,12 +182,26 @@ jobs:
           -Signature 'upload/${{ steps.installer.outputs.name }}.sig'
           -Notes "$env:RUNNER_TEMP/notes.md" -Out upload/latest.json
 
+      # the Linux job adds its packages to the same file; LF and no BOM, so sha256sum -c reads it
+      - name: Write SHA256SUMS.txt
+        run: |
+          $name = '${{ steps.installer.outputs.name }}'
+          $hash = (Get-FileHash -Algorithm SHA256 "upload/$name").Hash.ToLower()
+          [IO.File]::WriteAllText("$PWD/upload/SHA256SUMS.txt", "$hash  $name`n")
+
+      - name: Attest the installer
+        if: github.ref_type == 'tag'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: upload/${{ steps.installer.outputs.name }}
+
       - uses: actions/upload-artifact@v4
         with:
           name: agent-pets-${{ steps.version.outputs.version }}
           path: |
             upload/${{ steps.installer.outputs.name }}
             upload/latest.json
+            upload/SHA256SUMS.txt
           if-no-files-found: error
 
       - name: Draft the GitHub release
@@ -194,11 +212,18 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           NAME: ${{ steps.installer.outputs.name }}
         run: |
+          # how to check a download; only on the release page, latest.json keeps the plain notes for the updater
+          $verify = @(
+            '', '', '### Verify the download', '',
+            'Every file is built from this tag by the [release workflow](https://github.com/Marczelloo/agent-pets/actions/workflows/release.yml). Compare its hash with `SHA256SUMS.txt` (`Get-FileHash <file>` on Windows, `sha256sum -c SHA256SUMS.txt --ignore-missing` on Linux), or check where it was built with the [GitHub CLI](https://cli.github.com): `gh attestation verify <file> --repo Marczelloo/agent-pets`.'
+          ) -join "`n"
+          $notes = (Get-Content "$env:RUNNER_TEMP/notes.md" -Raw).TrimEnd() + $verify
+          Set-Content "$env:RUNNER_TEMP/release-notes.md" $notes -Encoding utf8NoBOM
           $draft = gh release view $env:TAG --json isDraft --jq .isDraft 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $env:TAG "upload/$env:NAME" upload/latest.json --draft --verify-tag --title "Agent Pets $env:VERSION" --notes-file "$env:RUNNER_TEMP/notes.md"
+            gh release create $env:TAG "upload/$env:NAME" upload/latest.json upload/SHA256SUMS.txt --draft --verify-tag --title "Agent Pets $env:VERSION" --notes-file "$env:RUNNER_TEMP/release-notes.md"
           } elseif ($draft -eq 'true') {
-            gh release upload $env:TAG "upload/$env:NAME" upload/latest.json --clobber
+            gh release upload $env:TAG "upload/$env:NAME" upload/latest.json upload/SHA256SUMS.txt --clobber
           } else {
             throw "Release $env:TAG is already published; its files stay as they are"
           }
@@ -213,6 +238,8 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: write
+      id-token: write # build provenance attestation
+      attestations: write
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -255,6 +282,12 @@ jobs:
           done
           ls -l upload
 
+      - name: Attest the packages
+        if: github.ref_type == 'tag'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: upload/*
+
       - uses: actions/upload-artifact@v4
         with:
           name: agent-pets-${{ steps.version.outputs.version }}-linux
@@ -269,4 +302,10 @@ jobs:
         run: |
           draft=$(gh release view "$TAG" --json isDraft --jq .isDraft)
           if [ "$draft" != "true" ]; then echo "::error::Release $TAG is not a draft; its files stay as they are"; exit 1; fi
+          # add the packages' hashes to the Windows job's SHA256SUMS.txt (dropping old Linux lines on a re-run)
+          gh release download "$TAG" -p SHA256SUMS.txt -D "$RUNNER_TEMP"
+          grep -vE '\.(deb|rpm|AppImage)$' "$RUNNER_TEMP/SHA256SUMS.txt" > "$RUNNER_TEMP/sums" || true
+          (cd upload && sha256sum -- *) >> "$RUNNER_TEMP/sums"
           gh release upload "$TAG" upload/* --clobber
+          cp "$RUNNER_TEMP/sums" "$RUNNER_TEMP/SHA256SUMS.txt"
+          gh release upload "$TAG" "$RUNNER_TEMP/SHA256SUMS.txt" --clobber

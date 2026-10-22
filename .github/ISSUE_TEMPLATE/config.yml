@@ -3,3 +3,6 @@ contact_links:
   - name: Security problem
     url: https://github.com/Marczelloo/agent-pets/security/advisories/new
     about: Report it privately, not as a public issue.
+  - name: Question or idea
+    url: https://github.com/Marczelloo/agent-pets/discussions
+    about: Ask, share your setup or suggest the next pet in Discussions.
