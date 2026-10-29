@@ -148,7 +148,8 @@ function Root() {
     onExport={inTauri ? () => invoke<string>('settings_export') : undefined}
     onImport={inTauri ? text => invoke<void>('settings_import', { text }) : undefined}
     onReveal={inTauri ? path => invoke<void>('settings_reveal', { path }) : undefined}
-    onCheck={() => { if (inTauri) void invoke<UpdateStatus>('update_check').then(setUpdate); else setUpdate({ state: 'latest' }); }} />;
+    onCheck={() => { if (inTauri) void invoke<UpdateStatus>('update_check').then(setUpdate); else setUpdate({ state: 'latest' }); }}
+    onInstall={inTauri ? () => { void invoke<void>('update_install').catch((e: unknown) => setUpdate({ state: 'error', message: String(e), verify: true })); } : undefined} />;
 }
 
 createRoot(document.getElementById('root')!).render(<Root />);

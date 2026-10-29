@@ -40,6 +40,8 @@ interface Props {
   /** update state (result of "Check now") */
   update?: UpdateStatus;
   onCheck?: () => void;
+  /** download (if needed) and install the found version now; the app restarts */
+  onInstall?: () => void;
   /** Diagnostics tab: open the bug form on GitHub */
   onReport?: () => void;
   onExport?: () => Promise<string>;
@@ -63,14 +65,16 @@ function checkResult(u: UpdateStatus | undefined): string | null {
   switch (u?.state) {
     case 'checking': return t().settings.checking;
     case 'latest': return t().settings.latest;
-    case 'available': case 'downloading': case 'ready': return t().panel.update.available(u.version);
+    case 'available': return t().panel.update.available(u.version);
+    case 'downloading': return t().panel.update.downloading(u.version) + (u.pct != null ? ` ${u.pct}%` : '');
+    case 'ready': return t().panel.update.ready(u.version);
     case 'error': return u.message;
     default: return null;
   }
 }
 
 /** Settings window: tabs on the left like Windows 11 Settings; changes apply immediately. */
-export function SettingsView({ settings: s, rows, diag, tab, onTab, onChange, onIntegration, onClaudeMod, message, update, onCheck, onReport, onExport, onImport, onReveal, monitors = [], leftFallback = false, verticalBar = false, onMove = () => {}, onMute = () => {}, hotkeyStatus, now = Date.now() }: Props) {
+export function SettingsView({ settings: s, rows, diag, tab, onTab, onChange, onIntegration, onClaudeMod, message, update, onCheck, onInstall, onReport, onExport, onImport, onReveal, monitors = [], leftFallback = false, verticalBar = false, onMove = () => {}, onMute = () => {}, hotkeyStatus, now = Date.now() }: Props) {
   const [copied, setCopied] = useState(false);
   const set = (patch: Partial<Settings>) => onChange({ ...s, ...patch });
   const muteUntil = mutedUntil(s.notifications, now);
@@ -168,6 +172,8 @@ export function SettingsView({ settings: s, rows, diag, tab, onTab, onChange, on
               ]} />} />
             <Row label={t().settings.latestVersion} control={<span className="check-ctl">
               <span className="ui-hint" role="status">{checkResult(update)}</span>
+              {onInstall && (update?.state === 'available' || update?.state === 'downloading' || update?.state === 'ready') &&
+                <button type="button" className="accent" disabled={update.state === 'downloading'} onClick={onInstall}>{t().panel.update.installNow}</button>}
               <button type="button" disabled={update?.state === 'checking' || !onCheck} onClick={onCheck}>{t().settings.checkNow}</button></span>} />
             <p className="ui-note">{t().settings.version(diag?.version ?? '–')}</p>
           </Section>

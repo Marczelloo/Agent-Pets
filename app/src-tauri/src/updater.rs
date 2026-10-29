@@ -13,6 +13,8 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 const ENDPOINT: &str = "https://github.com/Marczelloo/agent-pets/releases/latest/download/latest.json";
 const FIRST_CHECK: Duration = Duration::from_secs(15);
 const EVERY: Duration = Duration::from_secs(6 * 3600);
+/// After a network failure (often right after waking a laptop) check again sooner than `EVERY`.
+const RETRY: Duration = Duration::from_secs(15 * 60);
 const GATE_TICK: Duration = Duration::from_secs(5);
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -45,6 +47,9 @@ pub fn is_network(e: &tauri_plugin_updater::Error) -> bool {
     matches!(e, tauri_plugin_updater::Error::Network(_) | tauri_plugin_updater::Error::Reqwest(_))
 }
 
+/// Wait before the next scheduled check.
+pub fn next_check(offline: bool) -> Duration { if offline { RETRY } else { EVERY } }
+
 pub fn percent(done: u64, total: Option<u64>) -> Option<u8> {
     total.filter(|t| *t > 0).map(|t| ((done.min(t) * 100) / t) as u8)
 }
@@ -58,6 +63,8 @@ pub struct Updater {
     found: Mutex<Found>,
     /// One check or download at a time.
     working: AtomicBool,
+    /// The last check or download failed on the network.
+    offline: AtomicBool,
 }
 
 /// Release `working` on scope exit.
@@ -118,7 +125,9 @@ pub async fn check(app: &AppHandle, manual: bool) -> UpdateStatus {
     {
         let Some(_busy) = u.take() else { return u.status() };
         if manual { set(app, UpdateStatus::Checking); }
-        match find(app).await {
+        let r = find(app).await;
+        u.offline.store(matches!(r, Err((_, true))), Ordering::Release);
+        match r {
             Ok(None) => set(app, UpdateStatus::Latest),
             Ok(Some(up)) => {
                 let version = up.version.clone();
@@ -170,6 +179,7 @@ async fn download(app: &AppHandle) -> bool {
         Err(e) if is_network(&e) => {
             // interrupted download is not a bad signature: the version remains pending; retry on schedule
             pets_core::app_log!("update download (network): {e}");
+            u.offline.store(true, Ordering::Release);
             set(app, UpdateStatus::Available { version: up.version.clone(), notes: up.body.clone() });
             false
         }
@@ -231,7 +241,7 @@ fn ui_open(app: &AppHandle) -> bool {
     }).unwrap_or(false)
 }
 
-/// Scheduler thread: post-update toast, first check after 15 s, then every 6 h; in mode
+/// Scheduler thread: post-update toast, first check after 15 s, then every 6 h (15 min after a network failure); in mode
 /// automatic mode, check the quiet-moment gate for a downloaded version every 5 s.
 pub fn start(app: AppHandle) {
     std::thread::spawn(move || {
@@ -242,7 +252,7 @@ pub fn start(app: AppHandle) {
         loop {
             if Instant::now() >= next {
                 if mode(&app) != Updates::Off { tauri::async_runtime::block_on(check(&app, false)); }
-                next = Instant::now() + EVERY;
+                next = Instant::now() + next_check(app.state::<Updater>().offline.load(Ordering::Acquire));
             }
             let ready = matches!(app.state::<Updater>().status(), UpdateStatus::Ready { .. });
             if ready && mode(&app) == Updates::Auto {
@@ -345,6 +355,12 @@ mod tests {
         drop(busy);
         assert!(done_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap());
         waiter.join().unwrap();
+    }
+
+    #[test]
+    fn a_network_failure_retries_sooner() {
+        assert_eq!(next_check(false), EVERY);
+        assert!(next_check(true) < EVERY);
     }
 
     #[test]

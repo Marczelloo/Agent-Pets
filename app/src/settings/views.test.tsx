@@ -160,7 +160,7 @@ describe('SettingsView', () => {
   it('general tab: update mode select, check button with its result and the installed version', () => {
     const s = { ...defaultSettings(), updates: 'auto' as const };
     const view = (update?: UpdateStatus) => renderToString(<SettingsView settings={s} rows={rows} diag={{ ...diag, version: '0.7.0' }} tab="general"
-      onTab={() => {}} onChange={() => {}} onIntegration={async () => ''} message={null} update={update} onCheck={() => {}} />);
+      onTab={() => {}} onChange={() => {}} onIntegration={async () => ''} message={null} update={update} onCheck={() => {}} onInstall={() => {}} />);
     const html = view();
     expect(html).toContain('Aktualizacje');
     expect(html).toMatch(/role="radio" aria-checked="true"[^>]*>Instaluj automatycznie</);
@@ -170,6 +170,10 @@ describe('SettingsView', () => {
     expect(html).toContain('Wersja 0.7.0');
     expect(view({ state: 'latest' })).toContain('Masz najnowszą wersję');
     expect(view({ state: 'available', version: '0.7.1', notes: null })).toContain('Dostępna wersja 0.7.1');
+    expect(html).not.toContain('Zainstaluj teraz');
+    expect(view({ state: 'available', version: '0.7.1', notes: null })).toMatch(/<button[^>]*>Zainstaluj teraz</);
+    expect(view({ state: 'downloading', version: '0.7.1', pct: 40 })).toMatch(/Pobieram wersję 0.7.1… 40%[\s\S]*<button[^>]*disabled[^>]*>Zainstaluj teraz</);
+    expect(view({ state: 'ready', version: '0.7.1' })).toMatch(/<button[^>]*>Zainstaluj teraz</);
     expect(view({ state: 'error', message: 'Błąd sprawdzania aktualizacji', verify: false })).toContain('Błąd sprawdzania aktualizacji');
   });
   it('renders the look tab in English after switching', () => {

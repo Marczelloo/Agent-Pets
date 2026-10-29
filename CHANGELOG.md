@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Settings → General has an "Install now" button once a new version is found, next to "Check now"; the line beside it shows the download progress and, in automatic mode, that the version waits for the agents to finish.
+
+### Fixed
+
+- A laptop that wakes up offline no longer waits 6 hours for the next update check: after a network failure the app checks again in 15 minutes.
+- The log records when the app exits, so a missing line before the next start tells a crash from a quit.
+
 ## 0.19.1
 
 ### Changed

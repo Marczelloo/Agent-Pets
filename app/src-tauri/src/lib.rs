@@ -291,7 +291,8 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build Tauri application")
         .run(|app, event| {
-            if let RunEvent::Exit = event { stats::save_now(app); }
+            // logged so a missing line before the next "started" tells a crash (or a kill) from a quit
+            if let RunEvent::Exit = event { pets_core::app_log!("Agent Pets exiting"); stats::save_now(app); }
             // The stage window dies with the taskbar when Explorer restarts; the app should keep running.
             if let RunEvent::ExitRequested { api, code, .. } = event {
                 if code.is_none() { api.prevent_exit(); }
